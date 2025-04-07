@@ -1,0 +1,99 @@
+<html>
+  <head>
+    <title>Cineroll</title>
+    <script>
+
+      async function getImage() {
+        const res = await fetch("/image")
+        const { image } = await res.json()
+        document.getElementById("preview").src = image
+      }
+
+      async function toggleLed() {
+        console.log("LED toggled")
+        const btn = document.getElementById("led")
+        const res = await fetch("/led", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        })
+        const { led } = await res.json()
+        if (led) {
+          btn.classList.add("on")
+          btn.classList.remove("off")
+        } else {          
+          btn.classList.add("off")
+          btn.classList.remove("on")
+        }
+        await getImage()
+      }
+
+      async function camera(action) {
+        const res = await fetch("/camera", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(action)
+        })
+        await getImage()
+      }
+
+    </script>
+    <style>
+      body {
+        font-family: sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background-color: #bbb;
+      }
+      h1 {
+        
+        margin-bottom: 20px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        background-color: #909090;
+        color: white;
+        border: none;
+        border-radius: 5px;
+      }
+      .on {
+        background-color: #4CAF50;
+      }
+      .off {
+        background-color: grey;
+      }
+      .on:hover {
+        background-color: #367c39;
+      }
+      .off:hover {
+        background-color: #909090;
+      }
+      /* div {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      } */
+      
+    </style>
+  </head>
+  <body>
+    
+    <div>
+      <h1>Cineroll</h1>
+      <div style="margin-bottom: 5px;">
+        <button id="led" onclick="toggleLed()" class="{{led and "on" or "off"}}">💡 Éclairage</button>
+      </div>
+      <div style="margin-bottom: 5px;">
+        <img id="preview" src="https://picsum.photos/536/354" />
+      </div>
+      <div>
+        <button onclick="camera({zoom: -1})">-</button>
+        <button onclick="camera({zoom: 1})">+</button>
+      </div>
+    </div>
+  </body>
+</html>
