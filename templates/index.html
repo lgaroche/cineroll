@@ -4,11 +4,20 @@
     <script>
       let currentMode = 'preview';
       let capturePolling = null;
+      const mockMode = {{ mock_mode | lower }};
 
       async function getImage() {
-        const res = await fetch("/image");
-        const { image } = await res.json();
-        document.getElementById("preview").src = image;
+        const preview = document.getElementById("preview");
+        if (mockMode) {
+          // Mode mock: l'API retourne un JSON avec URL
+          const res = await fetch("/image");
+          const { image } = await res.json();
+          preview.src = image;
+        } else {
+          // Mode réel: l'API retourne l'image directement
+          // Ajouter timestamp pour éviter le cache
+          preview.src = "/image?" + Date.now();
+        }
       }
 
       async function getStatus() {
@@ -20,8 +29,12 @@
 
       function updateStatusDisplay(status) {
         document.getElementById("status-frame").textContent = status.frame_position;
-        document.getElementById("status-zoom").textContent = status.zoom_level;
-        document.getElementById("status-pan").textContent = `${status.pan_x}, ${status.pan_y}`;
+        // Zoom et pan sont des floats, les formater
+        const zoomPercent = Math.round((1 - status.zoom_level) * 100);
+        document.getElementById("status-zoom").textContent = `${zoomPercent}%`;
+        const panX = Math.round(status.pan_x * 100);
+        const panY = Math.round(status.pan_y * 100);
+        document.getElementById("status-pan").textContent = `${panX}, ${panY}`;
 
         // Mise à jour LED
         const btn = document.getElementById("led");
@@ -33,12 +46,21 @@
           btn.classList.remove("on");
         }
 
-        // Mise à jour capture
-        if (status.capture_active) {
+        // Mise à jour capture (afficher même si terminée pour montrer le résultat final)
+        if (status.capture_target > 0) {
           document.getElementById("capture-progress").textContent =
             `${status.capture_count} / ${status.capture_target}`;
           document.getElementById("progress-bar").style.width =
             `${(status.capture_count / status.capture_target) * 100}%`;
+        }
+
+        // Affichage erreur
+        const errorDiv = document.getElementById("error-message");
+        if (status.error) {
+          errorDiv.textContent = status.error;
+          errorDiv.style.display = "block";
+        } else {
+          errorDiv.style.display = "none";
         }
 
         updateControlsState(status.capture_active);
@@ -142,6 +164,8 @@
           if (!status.capture_active) {
             clearInterval(capturePolling);
             capturePolling = null;
+            // Forcer le déblocage des contrôles à la fin
+            updateControlsState(false);
           }
         }, 500);
       }
@@ -156,6 +180,8 @@
           capturePolling = null;
         }
         await getStatus();
+        // Forcer le déblocage des contrôles
+        updateControlsState(false);
       }
 
       function setMode(mode) {
@@ -164,6 +190,8 @@
           mode === 'preview' ? 'block' : 'none';
         document.getElementById("capture-controls").style.display =
           mode === 'capture' ? 'block' : 'none';
+        document.getElementById("frame-controls").style.display =
+          mode === 'preview' ? 'block' : 'none';
 
         document.getElementById("mode-preview").classList.toggle('active', mode === 'preview');
         document.getElementById("mode-capture").classList.toggle('active', mode === 'capture');
@@ -180,16 +208,40 @@
         font-family: sans-serif;
         display: flex;
         justify-content: center;
-        align-items: center;
+        align-items: flex-start;
         min-height: 100vh;
         background-color: #bbb;
         margin: 0;
+        padding: 20px;
+        overflow-y: auto;
+        box-sizing: border-box;
       }
       .container {
         background-color: #ddd;
         padding: 20px;
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        display: flex;
+        flex-direction: column;
+        max-width: 900px;
+      }
+      .main-layout {
+        display: flex;
+        gap: 20px;
+      }
+      .controls-column {
+        flex: 0 0 auto;
+        width: 180px;
+      }
+      .preview-column {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .below-preview {
+        width: 100%;
+        margin-top: 10px;
       }
       h1 {
         margin: 0 0 15px 0;
@@ -256,10 +308,14 @@
         gap: 5px;
       }
       .control-label {
-        width: 80px;
+        width: 60px;
         font-weight: bold;
         text-align: right;
         margin-right: 10px;
+      }
+      .control-label-small {
+        font-weight: bold;
+        margin-right: 5px;
       }
       input[type="number"] {
         width: 60px;
@@ -313,94 +369,114 @@
         width: 40px;
         height: 40px;
       }
+      .error-message {
+        background-color: #f44336;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 5px;
+        margin: 10px 0;
+        display: none;
+        font-weight: bold;
+      }
     </style>
   </head>
   <body>
     <div class="container">
       <h1>Cineroll</h1>
 
+      <!-- Error Message -->
+      <div id="error-message" class="error-message"></div>
+
       <!-- Mode Toggle -->
       <div class="mode-toggle">
-        <button id="mode-preview" onclick="setMode('preview')">Prévisualisation</button>
+        <button id="mode-preview" onclick="setMode('preview')">Preview</button>
         <button id="mode-capture" onclick="setMode('capture')">Capture</button>
       </div>
 
-      <!-- Preview Image -->
-      <div style="text-align: center;">
-        <img id="preview" src="https://picsum.photos/536/354" width="536" height="354" />
-      </div>
+      <div class="main-layout">
+        <!-- Left: Controls -->
+        <div class="controls-column">
+          <!-- Preview Controls -->
+          <div id="preview-controls">
+            <!-- LED -->
+            <div class="control-row">
+              <button id="led" onclick="toggleLed()" class="preview-control {{led and 'on' or 'off'}}">💡 Éclairage</button>
+            </div>
 
-      <!-- Status Bar -->
-      <div class="status-bar">
-        Image: <span id="status-frame">0</span> |
-        Zoom: <span id="status-zoom">0</span> |
-        Pan: <span id="status-pan">0, 0</span>
-      </div>
+            <!-- Zoom Controls -->
+            <div class="control-row">
+              <span class="control-label">Zoom:</span>
+              <button onclick="zoom(-1)" class="preview-control">-</button>
+              <button onclick="zoom(1)" class="preview-control">+</button>
+            </div>
 
-      <!-- Preview Controls -->
-      <div id="preview-controls">
-        <!-- LED -->
-        <div class="control-row">
-          <button id="led" onclick="toggleLed()" class="preview-control {{led and 'on' or 'off'}}">💡 Éclairage</button>
-        </div>
+            <!-- Pan Controls -->
+            <div class="control-row">
+              <span class="control-label">Pan:</span>
+              <div class="pan-grid">
+                <div></div>
+                <button onclick="pan(0, -1)" class="preview-control">↑</button>
+                <div></div>
+                <button onclick="pan(-1, 0)" class="preview-control">←</button>
+                <div></div>
+                <button onclick="pan(1, 0)" class="preview-control">→</button>
+                <div></div>
+                <button onclick="pan(0, 1)" class="preview-control">↓</button>
+                <div></div>
+              </div>
+            </div>
+          </div>
 
-        <!-- Frame Controls -->
-        <div class="control-row">
-          <span class="control-label">Images:</span>
-          <button onclick="rewind(10)" class="preview-control">-10</button>
-          <button onclick="rewind(5)" class="preview-control">-5</button>
-          <button onclick="rewindCustom()" class="preview-control">◀</button>
-          <input type="number" id="frame-input" value="1" min="1" class="preview-control" />
-          <button onclick="advanceCustom()" class="preview-control">▶</button>
-          <button onclick="advance(5)" class="preview-control">+5</button>
-          <button onclick="advance(10)" class="preview-control">+10</button>
-        </div>
+          <!-- Capture Controls -->
+          <div id="capture-controls" style="display: none;">
+            <div class="control-row">
+              <span class="control-label">Images:</span>
+              <input type="number" id="capture-frames" value="100" min="1" />
+            </div>
 
-        <!-- Zoom Controls -->
-        <div class="control-row">
-          <span class="control-label">Zoom:</span>
-          <button onclick="zoom(-1)" class="preview-control">-</button>
-          <button onclick="zoom(1)" class="preview-control">+</button>
-        </div>
+            <div class="control-row">
+              <button id="btn-start-capture" onclick="startCapture()" class="btn-success">Démarrer</button>
+            </div>
 
-        <!-- Pan Controls -->
-        <div class="control-row">
-          <span class="control-label">Pan:</span>
-          <div class="pan-grid">
-            <div></div>
-            <button onclick="pan(0, -1)" class="preview-control">↑</button>
-            <div></div>
-            <button onclick="pan(-1, 0)" class="preview-control">←</button>
-            <div></div>
-            <button onclick="pan(1, 0)" class="preview-control">→</button>
-            <div></div>
-            <button onclick="pan(0, 1)" class="preview-control">↓</button>
-            <div></div>
+            <div class="progress-container">
+              <div id="progress-bar" class="progress-bar"></div>
+            </div>
+
+            <div class="control-row">
+              <span>Progression: <span id="capture-progress">0 / 0</span></span>
+            </div>
+
+            <div class="control-row">
+              <button id="btn-stop-capture" onclick="stopCapture()" class="btn-danger" disabled>ARRÊT</button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Capture Controls -->
-      <div id="capture-controls" style="display: none;">
-        <div class="control-row">
-          <span class="control-label">Images:</span>
-          <input type="number" id="capture-frames" value="100" min="1" />
-        </div>
+        <!-- Right: Preview Image + controls below -->
+        <div class="preview-column">
+          <img id="preview" src="https://picsum.photos/536/354" width="536" height="354" />
 
-        <div class="control-row">
-          <button id="btn-start-capture" onclick="startCapture()" class="btn-success">Démarrer la capture</button>
-        </div>
+          <div class="below-preview">
+            <!-- Status Bar -->
+            <div class="status-bar">
+              Image: <span id="status-frame">0</span> |
+              Zoom: <span id="status-zoom">0</span> |
+              Pan: <span id="status-pan">0, 0</span>
+            </div>
 
-        <div class="progress-container">
-          <div id="progress-bar" class="progress-bar"></div>
-        </div>
-
-        <div class="control-row">
-          <span>Progression: <span id="capture-progress">0 / 0</span></span>
-        </div>
-
-        <div class="control-row">
-          <button id="btn-stop-capture" onclick="stopCapture()" class="btn-danger" disabled>ARRÊT D'URGENCE</button>
+            <!-- Frame Controls (preview mode only) -->
+            <div id="frame-controls">
+              <div class="control-row">
+                <button onclick="rewind(10)" class="preview-control">-10</button>
+                <button onclick="rewind(5)" class="preview-control">-5</button>
+                <button onclick="rewindCustom()" class="preview-control">◀</button>
+                <input type="number" id="frame-input" value="1" min="1" class="preview-control" />
+                <button onclick="advanceCustom()" class="preview-control">▶</button>
+                <button onclick="advance(5)" class="preview-control">+5</button>
+                <button onclick="advance(10)" class="preview-control">+10</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
