@@ -2,40 +2,178 @@
   <head>
     <title>Cineroll</title>
     <script>
+      let currentMode = 'preview';
+      let capturePolling = null;
 
       async function getImage() {
-        const res = await fetch("/image")
-        const { image } = await res.json()
-        document.getElementById("preview").src = image
+        const res = await fetch("/image");
+        const { image } = await res.json();
+        document.getElementById("preview").src = image;
+      }
+
+      async function getStatus() {
+        const res = await fetch("/status");
+        const status = await res.json();
+        updateStatusDisplay(status);
+        return status;
+      }
+
+      function updateStatusDisplay(status) {
+        document.getElementById("status-frame").textContent = status.frame_position;
+        document.getElementById("status-zoom").textContent = status.zoom_level;
+        document.getElementById("status-pan").textContent = `${status.pan_x}, ${status.pan_y}`;
+
+        // Mise à jour LED
+        const btn = document.getElementById("led");
+        if (status.led) {
+          btn.classList.add("on");
+          btn.classList.remove("off");
+        } else {
+          btn.classList.add("off");
+          btn.classList.remove("on");
+        }
+
+        // Mise à jour capture
+        if (status.capture_active) {
+          document.getElementById("capture-progress").textContent =
+            `${status.capture_count} / ${status.capture_target}`;
+          document.getElementById("progress-bar").style.width =
+            `${(status.capture_count / status.capture_target) * 100}%`;
+        }
+
+        updateControlsState(status.capture_active);
+      }
+
+      function updateControlsState(captureActive) {
+        const controls = document.querySelectorAll('.preview-control');
+        controls.forEach(el => {
+          el.disabled = captureActive;
+          if (captureActive) {
+            el.classList.add('disabled');
+          } else {
+            el.classList.remove('disabled');
+          }
+        });
+
+        document.getElementById("btn-start-capture").disabled = captureActive;
+        document.getElementById("btn-stop-capture").disabled = !captureActive;
       }
 
       async function toggleLed() {
-        console.log("LED toggled")
-        const btn = document.getElementById("led")
         const res = await fetch("/led", {
           method: "POST",
           headers: { "Content-Type": "application/json" }
-        })
-        const { led } = await res.json()
+        });
+        const { led } = await res.json();
+        const btn = document.getElementById("led");
         if (led) {
-          btn.classList.add("on")
-          btn.classList.remove("off")
-        } else {          
-          btn.classList.add("off")
-          btn.classList.remove("on")
+          btn.classList.add("on");
+          btn.classList.remove("off");
+        } else {
+          btn.classList.add("off");
+          btn.classList.remove("on");
         }
-        await getImage()
+        await getImage();
       }
 
-      async function camera(action) {
-        const res = await fetch("/camera", {
+      async function advance(n) {
+        await fetch("/advance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(action)
-        })
-        await getImage()
+          body: JSON.stringify({ frames: n })
+        });
+        await getStatus();
+        await getImage();
       }
 
+      async function rewind(n) {
+        await fetch("/rewind", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ frames: n })
+        });
+        await getStatus();
+        await getImage();
+      }
+
+      function advanceCustom() {
+        const n = parseInt(document.getElementById("frame-input").value) || 1;
+        advance(n);
+      }
+
+      function rewindCustom() {
+        const n = parseInt(document.getElementById("frame-input").value) || 1;
+        rewind(n);
+      }
+
+      async function zoom(direction) {
+        await fetch("/zoom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction: direction })
+        });
+        await getStatus();
+        await getImage();
+      }
+
+      async function pan(x, y) {
+        await fetch("/pan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x: x, y: y })
+        });
+        await getStatus();
+        await getImage();
+      }
+
+      async function startCapture() {
+        const frames = parseInt(document.getElementById("capture-frames").value) || 1;
+        await fetch("/capture/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ frames: frames })
+        });
+        await getStatus();
+
+        // Démarrer le polling
+        capturePolling = setInterval(async () => {
+          const status = await getStatus();
+          await getImage();
+          if (!status.capture_active) {
+            clearInterval(capturePolling);
+            capturePolling = null;
+          }
+        }, 500);
+      }
+
+      async function stopCapture() {
+        await fetch("/capture/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        if (capturePolling) {
+          clearInterval(capturePolling);
+          capturePolling = null;
+        }
+        await getStatus();
+      }
+
+      function setMode(mode) {
+        currentMode = mode;
+        document.getElementById("preview-controls").style.display =
+          mode === 'preview' ? 'block' : 'none';
+        document.getElementById("capture-controls").style.display =
+          mode === 'capture' ? 'block' : 'none';
+
+        document.getElementById("mode-preview").classList.toggle('active', mode === 'preview');
+        document.getElementById("mode-capture").classList.toggle('active', mode === 'capture');
+      }
+
+      // Initialisation
+      window.onload = function() {
+        getStatus();
+        setMode('preview');
+      };
     </script>
     <style>
       body {
@@ -45,10 +183,17 @@
         align-items: center;
         min-height: 100vh;
         background-color: #bbb;
+        margin: 0;
+      }
+      .container {
+        background-color: #ddd;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
       }
       h1 {
-        
-        margin-bottom: 20px;
+        margin: 0 0 15px 0;
+        text-align: center;
       }
       button {
         padding: 10px 20px;
@@ -58,6 +203,15 @@
         color: white;
         border: none;
         border-radius: 5px;
+        margin: 2px;
+      }
+      button:hover {
+        background-color: #707070;
+      }
+      button:disabled, button.disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+        opacity: 0.6;
       }
       .on {
         background-color: #4CAF50;
@@ -69,30 +223,185 @@
         background-color: #367c39;
       }
       .off:hover {
-        background-color: #909090;
+        background-color: #707070;
       }
-      /* div {
+      .mode-toggle {
         display: flex;
-        flex-direction: column;
+        margin-bottom: 15px;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .mode-toggle button {
+        flex: 1;
+        border-radius: 0;
+        margin: 0;
+      }
+      .mode-toggle button.active {
+        background-color: #2196F3;
+      }
+      .status-bar {
+        background-color: #333;
+        color: #0f0;
+        padding: 8px 12px;
+        font-family: monospace;
+        font-size: 14px;
+        margin: 10px 0;
+        border-radius: 3px;
+      }
+      .control-row {
+        display: flex;
         align-items: center;
-        gap: 10px;
-      } */
-      
+        justify-content: center;
+        margin: 8px 0;
+        gap: 5px;
+      }
+      .control-label {
+        width: 80px;
+        font-weight: bold;
+        text-align: right;
+        margin-right: 10px;
+      }
+      input[type="number"] {
+        width: 60px;
+        padding: 8px;
+        font-size: 14px;
+        border: 1px solid #999;
+        border-radius: 3px;
+        text-align: center;
+      }
+      .btn-danger {
+        background-color: #f44336;
+      }
+      .btn-danger:hover {
+        background-color: #d32f2f;
+      }
+      .btn-danger:disabled {
+        background-color: #ffcdd2;
+      }
+      .btn-success {
+        background-color: #4CAF50;
+      }
+      .btn-success:hover {
+        background-color: #388E3C;
+      }
+      .progress-container {
+        background-color: #333;
+        border-radius: 5px;
+        height: 25px;
+        margin: 10px 0;
+        overflow: hidden;
+      }
+      .progress-bar {
+        background-color: #4CAF50;
+        height: 100%;
+        width: 0%;
+        transition: width 0.3s;
+      }
+      #preview {
+        display: block;
+        border-radius: 5px;
+      }
+      .pan-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 40px);
+        grid-template-rows: repeat(3, 40px);
+        gap: 2px;
+        justify-content: center;
+      }
+      .pan-grid button {
+        padding: 5px;
+        width: 40px;
+        height: 40px;
+      }
     </style>
   </head>
   <body>
-    
-    <div>
+    <div class="container">
       <h1>Cineroll</h1>
-      <div style="margin-bottom: 5px;">
-        <button id="led" onclick="toggleLed()" class="{{led and "on" or "off"}}">💡 Éclairage</button>
+
+      <!-- Mode Toggle -->
+      <div class="mode-toggle">
+        <button id="mode-preview" onclick="setMode('preview')">Prévisualisation</button>
+        <button id="mode-capture" onclick="setMode('capture')">Capture</button>
       </div>
-      <div style="margin-bottom: 5px;">
-        <img id="preview" src="https://picsum.photos/536/354" />
+
+      <!-- Preview Image -->
+      <div style="text-align: center;">
+        <img id="preview" src="https://picsum.photos/536/354" width="536" height="354" />
       </div>
-      <div>
-        <button onclick="camera({zoom: -1})">-</button>
-        <button onclick="camera({zoom: 1})">+</button>
+
+      <!-- Status Bar -->
+      <div class="status-bar">
+        Image: <span id="status-frame">0</span> |
+        Zoom: <span id="status-zoom">0</span> |
+        Pan: <span id="status-pan">0, 0</span>
+      </div>
+
+      <!-- Preview Controls -->
+      <div id="preview-controls">
+        <!-- LED -->
+        <div class="control-row">
+          <button id="led" onclick="toggleLed()" class="preview-control {{led and 'on' or 'off'}}">💡 Éclairage</button>
+        </div>
+
+        <!-- Frame Controls -->
+        <div class="control-row">
+          <span class="control-label">Images:</span>
+          <button onclick="rewind(10)" class="preview-control">-10</button>
+          <button onclick="rewind(5)" class="preview-control">-5</button>
+          <button onclick="rewindCustom()" class="preview-control">◀</button>
+          <input type="number" id="frame-input" value="1" min="1" class="preview-control" />
+          <button onclick="advanceCustom()" class="preview-control">▶</button>
+          <button onclick="advance(5)" class="preview-control">+5</button>
+          <button onclick="advance(10)" class="preview-control">+10</button>
+        </div>
+
+        <!-- Zoom Controls -->
+        <div class="control-row">
+          <span class="control-label">Zoom:</span>
+          <button onclick="zoom(-1)" class="preview-control">-</button>
+          <button onclick="zoom(1)" class="preview-control">+</button>
+        </div>
+
+        <!-- Pan Controls -->
+        <div class="control-row">
+          <span class="control-label">Pan:</span>
+          <div class="pan-grid">
+            <div></div>
+            <button onclick="pan(0, -1)" class="preview-control">↑</button>
+            <div></div>
+            <button onclick="pan(-1, 0)" class="preview-control">←</button>
+            <div></div>
+            <button onclick="pan(1, 0)" class="preview-control">→</button>
+            <div></div>
+            <button onclick="pan(0, 1)" class="preview-control">↓</button>
+            <div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Capture Controls -->
+      <div id="capture-controls" style="display: none;">
+        <div class="control-row">
+          <span class="control-label">Images:</span>
+          <input type="number" id="capture-frames" value="100" min="1" />
+        </div>
+
+        <div class="control-row">
+          <button id="btn-start-capture" onclick="startCapture()" class="btn-success">Démarrer la capture</button>
+        </div>
+
+        <div class="progress-container">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+
+        <div class="control-row">
+          <span>Progression: <span id="capture-progress">0 / 0</span></span>
+        </div>
+
+        <div class="control-row">
+          <button id="btn-stop-capture" onclick="stopCapture()" class="btn-danger" disabled>ARRÊT D'URGENCE</button>
+        </div>
       </div>
     </div>
   </body>
