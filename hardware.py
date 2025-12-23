@@ -19,6 +19,8 @@ except ImportError:
     gpio = None
     Picamera2 = None
 
+print(f"[DEBUG] MOCK_MODE = {MOCK_MODE}")
+
 
 class Super8Controller:
     """Contrôleur non-bloquant pour la machine Super8."""
