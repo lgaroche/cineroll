@@ -96,11 +96,21 @@ class Super8Controller:
         self._pwm = gpio.PWM(self.STEP_PIN, self.PWM_FREQ)
 
         # Détection événement capteur
-        gpio.add_event_detect(
-            self.CAPTURE_PIN,
-            gpio.FALLING,
-            bouncetime=500
-        )
+        # D'abord supprimer toute détection existante (au cas où le programme a crashé)
+        try:
+            gpio.remove_event_detect(self.CAPTURE_PIN)
+        except Exception:
+            pass  # Ignorer si pas de détection existante
+
+        try:
+            gpio.add_event_detect(
+                self.CAPTURE_PIN,
+                gpio.FALLING,
+                bouncetime=500
+            )
+        except RuntimeError as e:
+            print(f"[WARNING] Failed to add edge detection: {e}")
+            print("[WARNING] Frame detection may not work properly")
 
         # Caméra picamera2
         self._camera = Picamera2()
